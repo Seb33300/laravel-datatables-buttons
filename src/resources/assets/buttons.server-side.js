@@ -1,30 +1,59 @@
-(function ($, DataTable) {
+(function (DataTable) {
     "use strict";
+
+    // Preserve PHP's bracket notation for nested objects and arrays.
+    // Once DataTables v2 support is dropped, remove this custom serializer
+    // and replace its calls with DataTable.util.ajax.serialize(params).
+    var _serializeParams = function (params) {
+        if (DataTable.util && DataTable.util.ajax && typeof DataTable.util.ajax.serialize === 'function') {
+            return DataTable.util.ajax.serialize(params);
+        }
+
+        var pairs = [];
+
+        var add = function (key, value) {
+            value = typeof value === 'function' ? value() : value;
+            pairs.push(encodeURIComponent(key) + '=' + encodeURIComponent(value == null ? '' : value));
+        };
+
+        var build = function (key, value) {
+            if (Array.isArray(value)) {
+                value.forEach(function (item, index) {
+                    if (/\[\]$/.test(key)) {
+                        add(key, item);
+                    } else {
+                        build(key + '[' + (item !== null && typeof item === 'object' ? index : '') + ']', item);
+                    }
+                });
+            } else if (Object.prototype.toString.call(value) === '[object Object]') {
+                Object.keys(value).forEach(function (name) {
+                    build(key + '[' + name + ']', value[name]);
+                });
+            } else {
+                add(key, value);
+            }
+        };
+
+        Object.keys(params).forEach(function (key) {
+            build(key, params[key]);
+        });
+
+        return pairs.join('&');
+    };
 
     var _buildParams = function (dt, action, onlyVisibles) {
         var params = dt.ajax.params();
         params.action = action;
-        params._token = $('meta[name="csrf-token"]').attr('content');
+        var csrfToken = document.querySelector('meta[name="csrf-token"]');
+        params._token = csrfToken ? csrfToken.getAttribute('content') : undefined;
 
         if (onlyVisibles) {
-            params.visible_columns = _getVisibleColumns();
+            params.visible_columns = dt.columns(':visible').names().toArray();
         } else {
             params.visible_columns = null;
         }
         
         return params;
-    };
-    
-    var _getVisibleColumns = function () {
-
-        var visible_columns = [];
-        $.each(DataTable.settings[0].aoColumns, function (key, col) {
-            if (col.bVisible) {
-                visible_columns.push(col.name);
-            }
-        });
-
-        return visible_columns;
     };
 
     var _downloadFromUrl = function (url, params) {
@@ -74,7 +103,7 @@
             }
         };
         xhr.setRequestHeader('Content-type', 'application/x-www-form-urlencoded');
-        xhr.send($.param(params));
+        xhr.send(_serializeParams(params));
     };
 
     var _buildUrl = function(dt, action) {
@@ -83,10 +112,10 @@
         params.action = action;
 
         if (url.indexOf('?') > -1) {
-            return url + '&' + $.param(params);
+            return url + '&' + _serializeParams(params);
         }
         
-        return url + '?' + $.param(params);
+        return url + '?' + _serializeParams(params);
     };
 
     DataTable.ext.buttons.excel = {
@@ -237,7 +266,11 @@
 
         action: function (e, dt, button, config) {
             dt.search('');
-            dt.columns().search('');
+            // DataTables 3 searches column groups separately from individual columns.
+            // @see https://datatables.net/releases/3/upgrade#Cross-column-search
+            dt.columns().every(function () {
+                this.search('');
+            });
             dt.draw();
         }
     };
@@ -267,7 +300,7 @@
     };
 
     if (typeof DataTable.ext.buttons.copyHtml5 !== 'undefined') {
-        $.extend(DataTable.ext.buttons.copyHtml5, {
+        Object.assign(DataTable.ext.buttons.copyHtml5, {
             text: function (dt) {
                 return '<i class="fa fa-copy"></i> ' + dt.i18n('buttons.copy', 'Copy');
             }
@@ -275,10 +308,10 @@
     }
 
     if (typeof DataTable.ext.buttons.colvis !== 'undefined') {
-        $.extend(DataTable.ext.buttons.colvis, {
+        Object.assign(DataTable.ext.buttons.colvis, {
             text: function (dt) {
                 return '<i class="fa fa-eye"></i> ' + dt.i18n('buttons.colvis', 'Column visibility');
             }
         });
     }
-})(jQuery, jQuery.fn.dataTable);
+})(window.DataTable || (window.jQuery && window.jQuery.fn.dataTable));
